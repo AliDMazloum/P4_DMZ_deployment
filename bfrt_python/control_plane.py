@@ -241,8 +241,8 @@ def throughput_thread():
                 throughput_list.append(metric_value)
                 #print("throughput is: ", metric_value);
                 
-                if(long_flows[flow_id]["prev_throughput"] < 100000 and new_bytes < 100000):
-                    del long_flows[flow_id]
+                # if(long_flows[flow_id]["prev_throughput"] < 100000 and new_bytes < 100000):
+                #     del long_flows[flow_id]
 
                 link_utilization = sum(throughput_list)/40e9 if sum(throughput_list)/40e9 < 1 else 1
                 send_data("link_utilization",link_utilization,to_sleep=False,flow_id=flow_id,socket=sock_60004)

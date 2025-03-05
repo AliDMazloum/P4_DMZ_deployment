@@ -1,0 +1,6 @@
+ucli
+pm port-add 30/- 40G NONE
+pm port-enb 30/-
+exit
+exit
+
