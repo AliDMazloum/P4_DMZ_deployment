@@ -14,7 +14,7 @@ class Socket():
         # print('Waiting for connection from the P4 switch...')
         sock.listen(10)  # Now wait for client connection.
         self.listener, addr = sock.accept()  # Establish connection with client.
-        print('Connected to port ',port)
+        #print('Connected to port ',port)
         # print('*' * 60)
         # print('\n')
     

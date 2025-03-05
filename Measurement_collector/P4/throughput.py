@@ -14,6 +14,7 @@ def collect_throughput_measurements(self):
             for report in measurements:
                 report = json.loads(report)
                 self.DB.write_measurement(report)
+                #print(report)
         
         except json.decoder.JSONDecodeError:
             pass

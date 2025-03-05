@@ -35,6 +35,7 @@ struct flow_sampling_t {
         ethernet_h   ethernet;
         ipv4_h       ipv4;
         tcp_h        tcp;
+	dummy_h      dummy;
         udp_h        udp;
         rtp_h        rtp;
 
@@ -495,10 +496,12 @@ struct flow_sampling_t {
                 };
 
             apply {
-                hdr.tcp.in_port = ig_intr_md.ingress_port;
-                //Port 140 is the one receiving the duplicated packets for calculating the queuing delay
-                if(hdr.ipv4.isValid() && hdr.tcp.isValid() && ig_intr_md.ingress_port != 140){
 
+		hdr.dummy.setValid();
+		hdr.dummy.in_port = ig_intr_md.ingress_port;
+                //Port 140 is the one receiving the duplicated packets for calculating the queuing delay
+                if(hdr.ipv4.isValid() && hdr.tcp.isValid()){// &&ig_intr_md.ingress_port != 136){
+	             //hdr.tcp.in_port = ig_intr_md.ingress_port;
                     // Apply hash functions to get the ID of the flows
                     calc_flow_id.apply();
                     calc_rev_flow_id.apply();
@@ -523,7 +526,7 @@ struct flow_sampling_t {
                     // If the packet belongs to new flow and the flow is a long flow (which is decided by the three sketches),
                     // the data plane notifies the control plane that a new is detected through digest
                     if(counted_flow.apply().miss){
-                        if( meta.value_sketch0 == 1 && meta.value_sketch1 == 1 && meta.value_sketch2 == 1 ) { //&& meta.value_sketch3 == 1) { #ig_intr_md.ingress_port != 132 &&
+                        if( meta.value_sketch0 == 1 && meta.value_sketch1 == 1 && meta.value_sketch2 == 1) { //&& meta.value_sketch3 == 1) { #ig_intr_md.ingress_port != 132 &&
                             ig_dprsr_md.digest_type = 0; 
                         }
                     }
@@ -563,9 +566,18 @@ struct flow_sampling_t {
                         }
                     }
                 }
-                if(ig_tm_md.ucast_egress_port != 192) {
-			        ig_tm_md.ucast_egress_port=148; // just to go to egress
-		        }
+                if(ig_intr_md.ingress_port == 156) {
+				//ig_intr_md.ingress_port = 192; 
+			        ig_tm_md.ucast_egress_port=192; // just to go to egress
+		        
+		}else if(ig_intr_md.ingress_port == 192){
+			ig_tm_md.ucast_egress_port=156;
+
+		}
+		else{
+			ig_tm_md.ucast_egress_port=160;
+		}
+		
             }
         }
 
@@ -597,6 +609,7 @@ struct flow_sampling_t {
         ethernet_h   ethernet;
         ipv4_h       ipv4;
         tcp_h        tcp;
+	dummy_h      dummy;
     }
     /********  G L O B A L   E G R E S S   M E T A D A T A  *********/
     struct my_egress_metadata_t {
@@ -636,8 +649,12 @@ struct flow_sampling_t {
 
             state parse_tcp {
                 pkt.extract(hdr.tcp);
-                transition accept;
+                transition parse_dummy;
             }
+	    state parse_dummy{
+		pkt.extract(hdr.dummy);
+		transition accept;
+		}
         }
 
     /***************** M A T C H - A C T I O N  *********************/
@@ -741,11 +758,12 @@ struct flow_sampling_t {
                 apply {
                     calc_flow_id.apply();
                     calc_packet_hash.apply();
-                    if (hdr.tcp.in_port == 148) {
-                        exec_update_total_packets();
-                        exec_update_packets_timestamp();
+                    exec_update_total_packets();
+		    if (hdr.dummy.in_port != 136) {
+                        //exec_update_total_packets();
+                        //exec_update_packets_timestamp();
                     }
-                    else if(hdr.tcp.in_port == 140) {
+                    else if(hdr.dummy.in_port == 136) {
                         exec_calc_queue_delay_packet();
                         if(meta.packet_queue_delay != 0) {
                             lpf_queue_delay_input = (value_t)meta.packet_queue_delay;
@@ -755,11 +773,9 @@ struct flow_sampling_t {
                             exec_update_queue_delays();
 
                         }
-                    }
-                    else if(hdr.tcp.in_port == 132){
-                        exec_update_total_packets();
-                    }
-                    eg_dprsr_md.drop_ctl = 0;
+                   }
+                    hdr.dummy.setInvalid();
+                    //eg_dprsr_md.drop_ctl = 0;
                 
                 }
             }
@@ -774,7 +790,10 @@ struct flow_sampling_t {
         in    egress_intrinsic_metadata_for_deparser_t  eg_dprsr_md)
         {
             apply {
-                pkt.emit(hdr);
+		pkt.emit(hdr);
+                //pkt.emit(hdr.ethernet);
+                //pkt.emit(hdr.ipv4);
+                //pkt.emit(hdr.tcp);
             }
         }
 

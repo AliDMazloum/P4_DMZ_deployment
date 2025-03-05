@@ -1,7 +1,7 @@
 import socket
 import json
 from datetime import datetime
-import secrets
+#import secrets
   
 
 """
@@ -17,7 +17,7 @@ class database:
     def connect(self):
         try:
             self.socket.connect((self.host, self.port))
-            print("Connected to", self.host, "on port", self.port)
+            #print("Connected to", self.host, "on port", self.port)
         except ConnectionRefusedError:
             print("Connection refused. Make sure the remote host and port are correct and accessible.")
         except Exception as e:
@@ -30,12 +30,13 @@ class database:
         #     print(message['flow_end_time'])
             
         if(message['per_flow_measurement']['type'] != "new_flow_report"):
-            message[message["metric_name"]] = float(message[message["metric_name"]])     
+            message[message["metric_name"]] = float(message[message["metric_name"]])
             # print(message)
         json_data = json.dumps(message)
         json_data += "\n"
         try:
             self.socket.sendall(json_data.encode())
+  
         except Exception as e:
             print("An error occurred while sending data:", str(e))
         

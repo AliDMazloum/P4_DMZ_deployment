@@ -36,7 +36,6 @@ port = 60006
 sock_60006.connect((host, port))
 
 
-
 def send_data(metric_name,metric_value, socket, metric_samples_per_second=250,to_sleep=True,time_deduction_offset=0,source_ip=None,flow_id=None,dst_ip=None,limited_by="Network"):
     import time,ipaddress
     from datetime import datetime,timezone
@@ -86,6 +85,7 @@ def new_long_flow(dev_id, pipe_id, direction, parser_id, session, msg):
         report["report_time"] = datetime.utcfromtimestamp(datetime.now(timezone.utc).timestamp()).strftime("%Y-%m-%dT%H:%M:%S.%f%z")
         report = json.dumps(report)
         report +="\n"
+        #print(report)
         sock_60002.send(report.encode())
         
         p4.Ingress.counted_flow.add_with_meter(flow_id=digest['flow_id'], ENTRY_TTL = 500)
@@ -101,28 +101,31 @@ def long_flow_timeout(dev_id, pipe_id, direction, parser_id, entry):
     try:
 
         flow_id = entry.key[b'meta.flow_id']
+        if(flow_id in long_flows):
+            #print("Flow with ID: ",flow_id," has terminated")
         
-        number_of_bytes = float(p4.Ingress.Sample_length.get\
+            number_of_bytes = float(p4.Ingress.Sample_length.get\
                              (REGISTER_INDEX=flow_id, from_hw=True, print_ents=False).data[b'Ingress.Sample_length.f1'][1])
-        end_time = float(p4.Ingress.flow_start_end_time.get\
+            end_time = float(p4.Ingress.flow_start_end_time.get\
                         (REGISTER_INDEX=flow_id, from_hw=True, print_ents=False).data[b'Ingress.flow_start_end_time.flow_end_time'][1])/10**6 + P4_start_time
-        duration = end_time - long_flows[flow_id]['flow_start_time']
-        p4.Ingress.flow_start_end_time.mod(REGISTER_INDEX=flow_id, flow_start_time=0)
-        p4.Ingress.flow_start_end_time.mod(REGISTER_INDEX=flow_id, flow_end_time=0)
-        p4.Egress.total_packets.mod(REGISTER_INDEX=flow_id, f1=0)
+            duration = end_time - long_flows[flow_id]['flow_start_time']
+            p4.Ingress.flow_start_end_time.mod(REGISTER_INDEX=flow_id, flow_start_time=0)
+            p4.Ingress.flow_start_end_time.mod(REGISTER_INDEX=flow_id, flow_end_time=0)
+            #p4.Egress.total_packets.mod(REGISTER_INDEX=flow_id, f1=0)
         
-        long_flows[flow_id]['flow_end_time'] = end_time
-        long_flows[flow_id]['duration'] = duration
-        long_flows[flow_id]['number_of_bytes'] = number_of_bytes
-        long_flows[flow_id]['bitrate'] = (long_flows[flow_id]['number_of_bytes'])*8/long_flows[flow_id]['duration']
-        report =long_flows[flow_id]
-        report["report_time"] = datetime.utcfromtimestamp(datetime.now(timezone.utc).timestamp()).strftime("%Y-%m-%dT%H:%M:%S.%f%z")
-        report = json.dumps(report)
-        report += "\n"
-        del long_flows[flow_id]
-        number_of_long_flows-=1
+            long_flows[flow_id]['flow_end_time'] = end_time
+            long_flows[flow_id]['duration'] = duration
+            long_flows[flow_id]['number_of_bytes'] = number_of_bytes + 4294967296*long_flows[flow_id]['bloating_number'] 
+            long_flows[flow_id]['bitrate'] = (long_flows[flow_id]['number_of_bytes'])*8/long_flows[flow_id]['duration']
+            report =long_flows[flow_id]
+            report["report_time"] = datetime.utcfromtimestamp(datetime.now(timezone.utc).timestamp()).strftime("%Y-%m-%dT%H:%M:%S.%f%z")
+            report = json.dumps(report)
+            report += "\n"
+            del long_flows[flow_id]
+            number_of_long_flows-=1
+    
     except Exception as e:
-            print(e)
+            print("Error occured while terminating flows",e)
 
 def reset_sketches():
     global p4
@@ -131,16 +134,20 @@ def reset_sketches():
     global sketches_reset_lock
     
     while (True):
-        time.sleep(4)
-        if(sketches_reset_lock):
-            p4.Ingress.sketch0.clear()
-            p4.Ingress.sketch1.clear()
-            p4.Ingress.sketch2.clear()
-
-            p4.Ingress.reg_table_1.clear() 
-        else:
+        try:
+            time.sleep(4)
+            if(sketches_reset_lock):
+                p4.Ingress.sketch0.clear()
+                p4.Ingress.sketch1.clear()
+                p4.Ingress.sketch2.clear()
+                p4.Ingress.reg_table_1.clear()
+                #print("Sketches Reseted")
+            else:
+                time.sleep(1)
+                sketches_reset_lock = 1
+        except:
+            print("Reset Sketches: begin_batch restarted")
             time.sleep(1)
-            sketches_reset_lock = 1
 
 def queue_delay_thread():
 
@@ -160,7 +167,7 @@ def queue_delay_thread():
                 queue_delay = (queue_delay) / (50000000)
                 metric_value = queue_delay
                 send_data(metric_name,metric_value,to_sleep=False,socket = sock_60005)
-            time.sleep(0.005)
+            time.sleep(0.05)
         except KeyError:
             pass
         except Exception as e:
@@ -229,24 +236,29 @@ def throughput_thread():
                 if (new_bytes < 0):
                     new_bytes = total_bytes + 4294967296 - long_flows[flow_id]["number_of_bytes"] + long_flows[flow_id]["bloating_number"]*4294967296 
                     long_flows[flow_id]["bloating_number"] += 1
+
                 metric_value = (new_bytes)*8
                 throughput_list.append(metric_value)
+                #print("throughput is: ", metric_value);
                 
-                link_utilization = sum(throughput_list)/9.9e9 if sum(throughput_list)/9.9e9 < 1 else 1
+                if(long_flows[flow_id]["prev_throughput"] < 100000 and new_bytes < 100000):
+                    del long_flows[flow_id]
+
+                link_utilization = sum(throughput_list)/40e9 if sum(throughput_list)/40e9 < 1 else 1
                 send_data("link_utilization",link_utilization,to_sleep=False,flow_id=flow_id,socket=sock_60004)
                 send_data("new_bytes",new_bytes,to_sleep=False,flow_id=flow_id,socket=sock_60004,dst_ip=long_flows[flow_id]["dst_IP"],source_ip=long_flows[flow_id]["src_IP"])
-
+                
                 # send_data("total_bytes",long_flows[flow_id]["bloating_number"]*4294967296 + total_bytes,to_sleep=False,flow_id=flow_id,socket=sock_60004,dst_ip=long_flows[flow_id]["dst_IP"],source_ip=long_flows[flow_id]["src_IP"])
                 
                 long_flows[flow_id]["number_of_bytes"] += new_bytes
                 send_data(metric_name,metric_value,to_sleep=False,flow_id=flow_id,socket=sock_60004,dst_ip=long_flows[flow_id]["dst_IP"],source_ip=long_flows[flow_id]["src_IP"])
-            
             fairenss_index = calculate_jains_fairness(throughput_list)
             if fairenss_index > -1:
                 send_data("fairenss_index",fairenss_index,to_sleep=False,socket=sock_60004)
 
             time.sleep(1)
         except KeyError:
+            print("key error occured in the throughput thread")
             pass
         except Exception as e:
             print("Error occured in the throughput_thread: ",e)
@@ -272,6 +284,7 @@ def retr_thread():
                                         (REGISTER_INDEX=flow_id,from_hw=True, print_ents=False).data[b'Ingress.retr.f1'][1])
                 total_packets = float(p4.Egress.total_packets.get\
                                         (REGISTER_INDEX=flow_id,from_hw=True, print_ents=False).data[b'Egress.total_packets.f1'][1])
+                #print("flow ", flow_id,". Number of packets: ",total_packets)
                 new_total_packets = total_packets - long_flows[flow_id]["total_packets"]
                 send_data("total_number_of_packets",new_total_packets,to_sleep=False,flow_id=flow_id,dst_ip=long_flows[flow_id]["dst_IP"],source_ip=long_flows[flow_id]["src_IP"],socket=sock_60006)
                 
@@ -365,11 +378,12 @@ while(1):
             p4.Ingress.crc32_2.clear()     
             
             long_flows.clear()
+            p4.Ingress.flow_start_end_time.clear()
             p4.Ingress.sketch0.clear()
             p4.Ingress.sketch1.clear()
             p4.Ingress.sketch2.clear()
 
         except Exception as e:
-            print(e)
+            print("An Error occured while resetting the sketches",e)
     
     time.sleep(1)

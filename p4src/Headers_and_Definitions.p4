@@ -7,7 +7,7 @@ typedef bit<32> value_t;
 
 #define SKETCH_BUCKET_LENGTH 8192 
 #define SKETCH_CELL_BIT_WIDTH 32
-#define THRESH 100000
+#define THRESH 50000000
 
 
 // Count Min Skitch is used to classify long flows
@@ -25,7 +25,7 @@ action apply_hash_##num() { \
 }\
 RegisterAction<bit<SKETCH_CELL_BIT_WIDTH>, _, bit<1>>(sketch##num) read_sketch##num = {\
     void apply(inout bit<SKETCH_CELL_BIT_WIDTH> register_data, out bit<1> result) { \
-        register_data = register_data +1; \
+        register_data = register_data +(bit<32>)hdr.ipv4.total_len; \
         if (register_data > THRESH) {\
             result = 1; \
         } else {\
@@ -85,8 +85,11 @@ header tcp_h {
     bit<16> window;
     bit<16> checksum;
     bit<16> urgent_ptr;
-	bit<9> in_port;
-	bit<7> dummy;
+}
+
+header dummy_h {
+    bit<9> in_port;
+    bit<7> dummy;
 }
 
 header udp_h {
