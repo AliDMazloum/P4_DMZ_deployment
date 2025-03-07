@@ -1,7 +1,5 @@
-import threading
 import Database
 import Listening_socket
-import json
 
 from P4.throughput import start_throughput_measurements_thread
 from P4.rtt import start_rtt_measurements_thread

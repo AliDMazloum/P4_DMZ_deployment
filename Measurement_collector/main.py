@@ -1,7 +1,3 @@
-# from measurements import Measurements
-# from Collecting_threads.collecting_threads import *
-# import threading
-
 import threading
 from measurements import Measurements
 

@@ -86,9 +86,10 @@ def new_long_flow(dev_id, pipe_id, direction, parser_id, session, msg):
         report = json.dumps(report)
         report +="\n"
         #print(report)
+        # print("New flow detected with ID: ", flow_id)
         sock_60002.send(report.encode())
         
-        p4.Ingress.counted_flow.add_with_meter(flow_id=digest['flow_id'], ENTRY_TTL = 500)
+        p4.Ingress.counted_flow.add_with_NoAction(flow_id=digest['flow_id'], ENTRY_TTL = 1000)
     return 0
 
 def long_flow_timeout(dev_id, pipe_id, direction, parser_id, entry):
@@ -121,6 +122,7 @@ def long_flow_timeout(dev_id, pipe_id, direction, parser_id, entry):
             report["report_time"] = datetime.utcfromtimestamp(datetime.now(timezone.utc).timestamp()).strftime("%Y-%m-%dT%H:%M:%S.%f%z")
             report = json.dumps(report)
             report += "\n"
+            # print("Active flow terminated with ID: ", flow_id)
             del long_flows[flow_id]
             number_of_long_flows-=1
     
@@ -191,6 +193,7 @@ def rtt_thread():
                 rtt = float(p4.Ingress.rtt.get\
                                         (REGISTER_INDEX=long_flows[flow_id]["rev_flow_id"],from_hw=True, print_ents=False).data[b'Ingress.rtt.f1'][1])
                 metric_value = rtt/1e9
+                # print("The RTT of flow ", flow_id, " is ",metric_value)
                 send_data(metric_name,metric_value,flow_id=flow_id,socket=sock_60003,to_sleep=False,dst_ip=long_flows[flow_id]["dst_IP"],source_ip=long_flows[flow_id]["src_IP"])
             time.sleep(1)
         except KeyError:
@@ -241,24 +244,27 @@ def throughput_thread():
                 throughput_list.append(metric_value)
                 #print("throughput is: ", metric_value);
                 
-                # if(long_flows[flow_id]["prev_throughput"] < 100000 and new_bytes < 100000):
-                #     del long_flows[flow_id]
-
-                link_utilization = sum(throughput_list)/40e9 if sum(throughput_list)/40e9 < 1 else 1
-                send_data("link_utilization",link_utilization,to_sleep=False,flow_id=flow_id,socket=sock_60004)
-                send_data("new_bytes",new_bytes,to_sleep=False,flow_id=flow_id,socket=sock_60004,dst_ip=long_flows[flow_id]["dst_IP"],source_ip=long_flows[flow_id]["src_IP"])
-                
-                # send_data("total_bytes",long_flows[flow_id]["bloating_number"]*4294967296 + total_bytes,to_sleep=False,flow_id=flow_id,socket=sock_60004,dst_ip=long_flows[flow_id]["dst_IP"],source_ip=long_flows[flow_id]["src_IP"])
-                
-                long_flows[flow_id]["number_of_bytes"] += new_bytes
-                send_data(metric_name,metric_value,to_sleep=False,flow_id=flow_id,socket=sock_60004,dst_ip=long_flows[flow_id]["dst_IP"],source_ip=long_flows[flow_id]["src_IP"])
+                if(long_flows[flow_id]["prev_throughput"] < 100000 and new_bytes < 100000):
+                    try:
+                        del long_flows[flow_id]
+                    except:
+                        pass
+                else:
+                    link_utilization = sum(throughput_list)/40e9 if sum(throughput_list)/40e9 < 1 else 1
+                    send_data("link_utilization",link_utilization,to_sleep=False,flow_id=flow_id,socket=sock_60004)
+                    send_data("new_bytes",new_bytes,to_sleep=False,flow_id=flow_id,socket=sock_60004,dst_ip=long_flows[flow_id]["dst_IP"],source_ip=long_flows[flow_id]["src_IP"])
+                    
+                    # send_data("total_bytes",long_flows[flow_id]["bloating_number"]*4294967296 + total_bytes,to_sleep=False,flow_id=flow_id,socket=sock_60004,dst_ip=long_flows[flow_id]["dst_IP"],source_ip=long_flows[flow_id]["src_IP"])
+                    
+                    long_flows[flow_id]["number_of_bytes"] += new_bytes
+                    send_data(metric_name,metric_value,to_sleep=False,flow_id=flow_id,socket=sock_60004,dst_ip=long_flows[flow_id]["dst_IP"],source_ip=long_flows[flow_id]["src_IP"])
             fairenss_index = calculate_jains_fairness(throughput_list)
             if fairenss_index > -1:
                 send_data("fairenss_index",fairenss_index,to_sleep=False,socket=sock_60004)
 
             time.sleep(1)
-        except KeyError:
-            print("key error occured in the throughput thread")
+        except KeyError as key:
+            print("key error occured in the throughput thread", key)
             pass
         except Exception as e:
             print("Error occured in the throughput_thread: ",e)
@@ -325,7 +331,7 @@ def number_of_flows():
     return 0
  
 try:
-    p4.Ingress.counted_flow.idle_table_set_notify(enable=True, callback=long_flow_timeout, interval=200, min_ttl=400, max_ttl=1000)
+    p4.Ingress.counted_flow.idle_table_set_notify(enable=True, callback=long_flow_timeout, interval=200, min_ttl=100, max_ttl=10000)
     p4.IngressDeparser.new_long_flow_digest.callback_register(new_long_flow)
 except:
     print('Error registering callback')
@@ -345,7 +351,7 @@ th_retr_thread = threading.Thread(target=retr_thread, name="th_retr_thread")
 
 periodic_reset.start()
 
-th_queue_delay_thread.start()
+# th_queue_delay_thread.start()
 
 th_rtt_thread.start()
 

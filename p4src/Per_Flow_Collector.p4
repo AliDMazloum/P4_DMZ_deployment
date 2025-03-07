@@ -214,8 +214,6 @@ struct flow_sampling_t {
             SKETCH_COUNT(1, HashAlgorithm_t.CUSTOM, crc10d_2)
             SKETCH_COUNT(2, HashAlgorithm_t.CUSTOM, crc10d_3)
             
-            action meter(){
-            }
 
             // This table stores the ID of the active flows
             // idle_timeout is enabled to automatically remove unactive flows and notify the control plane 
@@ -224,7 +222,6 @@ struct flow_sampling_t {
                     meta.flow_id: exact;
                 }
                 actions = {
-                    meter;
                     NoAction;
                 }
                 size = 2024;
@@ -242,7 +239,7 @@ struct flow_sampling_t {
             // ***********************************************************************************************
 
             Register<bit<32>, _>(2048) Sample_length;
-            RegisterAction<bit<32>, _, bit<32>>(Sample_length) update_Sample_length = {
+            RegisterAction<bit<32>, _, bit<1>>(Sample_length) update_Sample_length = {
                 void apply(inout bit<32> register_data) {
                     register_data = register_data + (bit<32>)hdr.ipv4.total_len;
                 }
@@ -373,8 +370,8 @@ struct flow_sampling_t {
                 // Self-expiry hash table, each entry stores a signature and a timestamp
                 
                 #define TIMESTAMP ig_intr_md.ingress_mac_tstamp[31:0]
-                #define TS_EXPIRE_THRESHOLD (200*1000*1000)
-                //50ms
+                #define TS_EXPIRE_THRESHOLD (300*1000*1000)
+                //300ms
                 #define TS_LEGITIMATE_THRESHOLD (2000*1000*1000)
                 
                 
@@ -497,8 +494,8 @@ struct flow_sampling_t {
 
             apply {
 
-		hdr.dummy.setValid();
-		hdr.dummy.in_port = ig_intr_md.ingress_port;
+                hdr.dummy.setValid();
+                hdr.dummy.in_port = ig_intr_md.ingress_port;
                 //Port 140 is the one receiving the duplicated packets for calculating the queuing delay
                 if(hdr.ipv4.isValid() && hdr.tcp.isValid()){// &&ig_intr_md.ingress_port != 136){
 	             //hdr.tcp.in_port = ig_intr_md.ingress_port;
@@ -520,63 +517,77 @@ struct flow_sampling_t {
                     exec_read_sketch0();
                     exec_read_sketch1();
                     exec_read_sketch2();
+
+                    // RTT calculation
+                    tb_decide_packet_type.apply();
                     
 
-                    // Check if the packet dose ont belongs to an active flow (i.e., counted_flow.apply() ==  miss)
+                    // Check if the packet does not belong to an active flow (i.e., counted_flow.apply() ==  miss)
                     // If the packet belongs to new flow and the flow is a long flow (which is decided by the three sketches),
                     // the data plane notifies the control plane that a new is detected through digest
                     if(counted_flow.apply().miss){
                         if( meta.value_sketch0 == 1 && meta.value_sketch1 == 1 && meta.value_sketch2 == 1) { //&& meta.value_sketch3 == 1) { #ig_intr_md.ingress_port != 132 &&
                             ig_dprsr_md.digest_type = 0; 
                         }
-                    }
-                                            
-
-                                    
-                    // RTT calculation
-                    tb_decide_packet_type.apply();
-                        
-                    // compute e_ack
-                    if(meta.pkt_type==PKT_TYPE_SEQ){
-                        compute_eack_1_();
-                        compute_eack_2_();
-                        compute_eack_3_();
-                        compute_eack_4_();
-                        compute_eack_5_();
-                        compute_eack_6_();
-                        if(hdr.tcp.flags==TCP_FLAGS_S){
-                            compute_eack_last_if_syn();
-                        } else {
-                            exec_read_store_last_seq();
-                        }                            
-                        get_pkt_signature_SEQ();
-                        get_location_SEQ();
-                        exec_table_1_insert();
-                        exec_update_retr();
-                    }
-                    else{
-                        get_pkt_signature_ACK();
-                        get_location_ACK();
-                        exec_table_1_tryRead();
-                        if(meta.table_1_read==0){
-                            meta.rtt=0;                       
-                        }else {
-                            meta.rtt = (TIMESTAMP-meta.table_1_read);
-                            exec_update_rtt();
+                        if(meta.pkt_type==PKT_TYPE_ACK){
+                            get_pkt_signature_ACK();
+                            get_location_ACK();
+                            exec_table_1_tryRead();
+                            if(meta.table_1_read==0){
+                                meta.rtt=0;                       
+                            }else {
+                                meta.rtt = (TIMESTAMP-meta.table_1_read);
+                                exec_update_rtt();
+                            }
                         }
+                        
                     }
+                    else if(meta.pkt_type==PKT_TYPE_SEQ){
+                        // RTT calculation
+                        // tb_decide_packet_type.apply();
+                            
+                        // compute e_ack
+                        // if(meta.pkt_type==PKT_TYPE_SEQ){
+                            compute_eack_1_();
+                            compute_eack_2_();
+                            compute_eack_3_();
+                            compute_eack_4_();
+                            compute_eack_5_();
+                            compute_eack_6_();
+                            if(hdr.tcp.flags==TCP_FLAGS_S){
+                                compute_eack_last_if_syn();
+                            } else {
+                                exec_read_store_last_seq();
+                            }                            
+                            get_pkt_signature_SEQ();
+                            get_location_SEQ();
+                            exec_table_1_insert();
+                            exec_update_retr();
+                        // }
+                        // else if(meta.pkt_type==PKT_TYPE_ACK){
+                        //     get_pkt_signature_ACK();
+                        //     get_location_ACK();
+                        //     exec_table_1_tryRead();
+                        //     if(meta.table_1_read==0){
+                        //         meta.rtt=0;                       
+                        //     }else {
+                        //         meta.rtt = (TIMESTAMP-meta.table_1_read);
+                        //         exec_update_rtt();
+                        //     }
+                        // }
+                    }            
                 }
                 if(ig_intr_md.ingress_port == 156) {
 				//ig_intr_md.ingress_port = 192; 
 			        ig_tm_md.ucast_egress_port=192; // just to go to egress
 		        
-		}else if(ig_intr_md.ingress_port == 192){
-			ig_tm_md.ucast_egress_port=156;
+                }else if(ig_intr_md.ingress_port == 192){
+                    ig_tm_md.ucast_egress_port=156;
 
-		}
-		else{
-			ig_tm_md.ucast_egress_port=160;
-		}
+                }
+                else{
+                    ig_tm_md.ucast_egress_port=156;
+                }
 		
             }
         }
@@ -759,21 +770,20 @@ struct flow_sampling_t {
                     calc_flow_id.apply();
                     calc_packet_hash.apply();
                     exec_update_total_packets();
-		    if (hdr.dummy.in_port != 136) {
-                        //exec_update_total_packets();
-                        //exec_update_packets_timestamp();
-                    }
-                    else if(hdr.dummy.in_port == 136) {
-                        exec_calc_queue_delay_packet();
-                        if(meta.packet_queue_delay != 0) {
-                            lpf_queue_delay_input = (value_t)meta.packet_queue_delay;
-                            lpf_queue_delay_output_1 = lpf_queue_delay_1.execute(lpf_queue_delay_input, 0);
-                            lpf_queue_delay_output_2 = lpf_queue_delay_2.execute(lpf_queue_delay_output_1, 0);
-                            meta.packet_queue_delay = lpf_queue_delay_output_2;
-                            exec_update_queue_delays();
-
+                    if (hdr.dummy.in_port != 136) {
+                                //exec_update_total_packets();
+                                //exec_update_packets_timestamp();
+                            }
+                            else if(hdr.dummy.in_port == 136) {
+                                exec_calc_queue_delay_packet();
+                                if(meta.packet_queue_delay != 0) {
+                                    lpf_queue_delay_input = (value_t)meta.packet_queue_delay;
+                                    lpf_queue_delay_output_1 = lpf_queue_delay_1.execute(lpf_queue_delay_input, 0);
+                                    lpf_queue_delay_output_2 = lpf_queue_delay_2.execute(lpf_queue_delay_output_1, 0);
+                                    meta.packet_queue_delay = lpf_queue_delay_output_2;
+                                    exec_update_queue_delays();
+                                }
                         }
-                   }
                     hdr.dummy.setInvalid();
                     //eg_dprsr_md.drop_ctl = 0;
                 
